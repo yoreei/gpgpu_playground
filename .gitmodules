@@ -1,0 +1,6 @@
+[submodule "cuda-samples"]
+	path = cuda-samples
+	url = git@github.com:NVIDIA/cuda-samples.git
+[submodule "ImageFiltering_CUDA"]
+	path = ImageFiltering_CUDA
+	url = git@github.com:KhosroBahrami/ImageFiltering_CUDA.git
