@@ -12,6 +12,7 @@ __global__ void vectorAdd(const int *__restrict a, const int *__restrict b,
                           int *__restrict c, int N) {
   // Calculate global thread ID
   int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
+  printf("Hello from thread %d!\n", tid);
 
   // Boundary check
   if (tid < N) c[tid] = a[tid] + b[tid];
