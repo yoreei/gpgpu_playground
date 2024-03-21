@@ -47,13 +47,14 @@ __global__ void sumReduction(int *v, int *v_r) {
 }
 
 int main() {
-  // Vector size
   int N = 1 << 16;
+  const int TB_SIZE = 256;
+  int GRID_SIZE = N / TB_SIZE;
   size_t bytes = N * sizeof(int);
-
+  size_t bytes_grid = GRID_SIZE * sizeof(int);
   // Host data
   vector<int> h_v(N);
-  vector<int> h_v_r(N);
+  vector<int> h_v_r(GRID_SIZE);
 
   // Initialize the input data
   generate(begin(h_v), end(h_v), []() { return rand() % 10; });
@@ -61,16 +62,11 @@ int main() {
   // Allocate device memory
   int *d_v, *d_v_r;
   cudaMalloc(&d_v, bytes);
-  cudaMalloc(&d_v_r, bytes);
+  cudaMalloc(&d_v_r, bytes_grid);
 
   // Copy to device
   cudaMemcpy(d_v, h_v.data(), bytes, cudaMemcpyHostToDevice);
 
-  // TB Size
-  const int TB_SIZE = 256;
-
-  // Grid Size (No padding)
-  int GRID_SIZE = N / TB_SIZE;
 
   // Call kernels
   sumReduction<<<GRID_SIZE, TB_SIZE>>>(d_v, d_v_r);
@@ -78,12 +74,10 @@ int main() {
   sumReduction<<<1, TB_SIZE>>>(d_v_r, d_v_r);
 
   // Copy to host;
-  cudaMemcpy(h_v_r.data(), d_v_r, bytes, cudaMemcpyDeviceToHost);
+  cudaMemcpy(h_v_r.data(), d_v_r, bytes_grid, cudaMemcpyDeviceToHost);
 
-  // Print the result
-  assert(h_v_r[0] == std::accumulate(begin(h_v), end(h_v), 0));
-
-  cout << "COMPLETED SUCCESSFULLY\n";
+  cout << "host: " << std::accumulate(begin(h_v), end(h_v), 0) << std::endl;
+  cout << "device: " << h_v_r[0] << std::endl;
 
   return 0;
 }

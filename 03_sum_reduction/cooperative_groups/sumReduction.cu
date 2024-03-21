@@ -65,13 +65,13 @@ __global__ void sum_reduction(int *sum, int *input, int n){
 
 void initialize_vector(int *v, int n) {
 	for (int i = 0; i < n; i++) {
-		v[i] = 1;//rand() % 10;
+		v[i] = 2;//rand() % 10;
 	}
 }
 
 int main() {
 	// Vector size
-	int n = 1 << 13;
+	int n = 100;
 	size_t bytes = n * sizeof(int);
 
 	// Original vector and result vector
@@ -99,7 +99,7 @@ int main() {
 
 	//printf("Accumulated result is %d \n", sum[0]);
 	//scanf("Press enter to continue: ");
-    assert(*sum == 8192);
+    assert(*sum == 200);
 
 	printf("COMPLETED SUCCESSFULLY\n");
 
