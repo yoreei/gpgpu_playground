@@ -1,25 +1,165 @@
-  // d_Grid2D[tid] = tid;
-    // if (tid == 0) {
-    //     // Pretty print radii and their corresponding origins
-    //     printf("Antennae Radii and Origins:\n");
-    //     for (int i = 0; i < num_antennae; ++i) {
-    //         printf("Radii[%d] = %d, OriginX[%d] = %d, OriginY[%d] = %d\n", i, d_radii[i], i, d_originX[i], i, d_originY[i]);
-    //     }
-    //     // Pretty print Points of Interest Vertices
-    //     printf("Points of Interest Vertices:\n");
-    //     for (int i = 0; i < num_PoIVert; ++i) {
-    //         printf("PoIVertX[%d] = %d, PoIVertY[%d] = %d\n", i, d_PoIVertX[i], i, d_PoIVertY[i]);
-    //     }
-    //     // Print maxX
-    //     printf("maxX = %d\n", maxX);
-    //     // Optionally, print the starting part of the grid, if needed
-    //     // Limited number for demonstration as grids can be very large
-    //     int printLimit = min(maxX * maxX, 10); // Arbitrary limit for demonstration
-    //     printf("Grid2D (First %d Elements):\n", printLimit);
-    //     for (int i = 0; i < printLimit; ++i) {
-    //         printf("Grid2D[%d] = %d\n", i, d_Grid2D[i]);
-    //     }
-    // }
+// BEGIN utils
+#include <string>
+#include <stdexcept>
+#include <iterator>
+#include <iostream>
+void chck() {
+    cudaError_t status = cudaGetLastError();
+    if (status != cudaSuccess) {
+        std::string err = cudaGetErrorString(status);
+        throw std::runtime_error(err);
+    }
+    cudaDeviceSynchronize();
+    status = cudaGetLastError();
+    if (status != cudaSuccess) {
+        std::string err = cudaGetErrorString(status);
+        throw std::runtime_error(err);
+    }
+}
+
+
+template<typename Container>
+void print2d(const Container& v, size_t maxX, const std::string& label) {
+    std::cout << label << std::endl;
+
+    size_t nl_cnt = 0;
+    for (auto it = std::begin(v); it != std::end(v); ++it) {
+        if(nl_cnt == maxX){
+            std::cout << std::endl;
+            nl_cnt = 0;
+        }
+        std::cout << *it;
+        ++nl_cnt;
+    }
+    std::cout << std::endl;
+}
+// END utils
+
+// BEGIN CUDAArray
+#include <stdexcept>
+#include <cassert>
+#include <memory>
+
+/*
+POD wrapper around device & host memory representing the same object.
+*/
+template<typename T>
+struct CUDAArray {
+public:
+    T* d_ptr = nullptr;
+    T* h_ptr = nullptr;
+
+private:
+    size_t _size = 0;
+
+public:
+    __device__ __host__ size_t size() const { return _size; }
+
+    struct Deleter {
+      void operator()(CUDAArray* obj) const {
+        if(obj){
+            cudaFree(obj->d_ptr);
+            chck();
+            cudaFreeHost(obj->h_ptr);
+            chck();
+        }
+      }
+    };
+
+    using CUDAArrayPtr = std::unique_ptr<CUDAArray<T>, CUDAArray<T>::Deleter>;
+
+    template<typename... Args>
+    static CUDAArrayPtr make_ptr(Args&&... args){
+       auto* ptr = new CUDAArray<T>(std::forward<Args>(args)...);
+       return CUDAArrayPtr(ptr, CUDAArray<T>::Deleter{});
+    }
+
+    static CUDAArrayPtr make_ptr(std::initializer_list<T> init) {
+        auto* ptr = new CUDAArray<T>(init);
+        return CUDAArrayPtr(ptr, CUDAArray<T>::Deleter{});
+    }
+
+
+    CUDAArray(size_t num_elements, T fill) : CUDAArray(num_elements) {
+        std::fill_n(h_ptr, num_elements, fill);
+        cudaMemcpy(d_ptr, h_ptr, size_bytes(), ::cudaMemcpyHostToDevice);
+        chck();
+    }
+
+    CUDAArray(std::initializer_list<T> init) : CUDAArray(init.size()) {
+        std::copy(init.begin(), init.end(), h_ptr);
+        cudaMemcpy(d_ptr, h_ptr, size_bytes(), ::cudaMemcpyHostToDevice);
+        chck();
+    }
+
+    explicit CUDAArray(size_t num_elements) : _size(num_elements) {
+        cudaError_t status = cudaMalloc(&d_ptr, size_bytes());
+        chck();
+        status = cudaMallocHost(&h_ptr, size_bytes());
+        chck();
+    }
+
+    /* TODO: Initialize CUDAArray with a C array, taking ownership */
+
+    using iterator = T*;
+    using const_iterator = const T*;
+
+    iterator begin() noexcept {
+        return h_ptr;
+    }
+
+    iterator end() noexcept {
+        return h_ptr + _size;
+    }
+
+    const_iterator begin() const noexcept {
+        return h_ptr;
+    }
+
+    const_iterator end() const noexcept {
+        return h_ptr + _size;
+    }
+
+    const_iterator cbegin() const noexcept {
+        return h_ptr;
+    }
+
+    const_iterator cend() const noexcept {
+        return h_ptr + _size;
+    }
+
+    // not working?
+//    __host__ __device__
+//    T& _at(int idx) const {
+//#ifdef __CUDA_ARCH__
+//        if(idx >= _size) {
+//          printf("Out of bounds access at %d\n", idx);
+//        }
+//        return d_ptr[idx];
+//#else
+//        assert(idx < _size);
+//        return h_ptr[idx];
+//#endif
+//    }
+//    __host__ __device__ T& at(size_t idx){ return _at(idx); }
+//    __host__ __device__ const T& at(size_t idx) const { return _at(idx); }
+
+    void cudaMemcpyHostToDevice()
+    {
+        cudaMemcpy(d_ptr, h_ptr, size_bytes(), ::cudaMemcpyHostToDevice);
+        chck();
+    }
+
+    void cudaMemcpyDeviceToHost()
+    {
+        cudaMemcpy(h_ptr, d_ptr, size_bytes(), ::cudaMemcpyDeviceToHost);
+        chck();
+    }
+
+private:
+    size_t size_bytes() const { return _size * sizeof(T); }
+};
+// END CUDAArray
 
 #include <numeric>  // std::reduce
 #include <algorithm>
@@ -54,10 +194,10 @@ __device__ void warpReduce(int* shmem_ptr, int t) {
 	shmem_ptr[t] += shmem_ptr[t + 1];
 }
 
-/* if max(blockIdx.x) > 1 : v_r[i % blockDim.x == 0] will store blockwise sum
-*  if max(blockIdx.x) == 1: v_r[0] will store the sum of all elements in v
+/* when max(blockIdx.x) > 1 : v_r[i % blockDim.x == 0] will store blockwise sum
+*  when max(blockIdx.x) = 1: v_r[0] will store the sum of all elements in v
 */
-__global__ void sum_reduction(int *v, int *v_r, int N) {
+__global__ void sum_reduction(const CUDAArray<int> v, CUDAArray<int> v_r, int N) {
 	__shared__ int partial_sum[SHMEM_SIZE];
   int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
   //printf("starting thread %d\n", tid);
@@ -67,7 +207,7 @@ __global__ void sum_reduction(int *v, int *v_r, int N) {
   }
 	// Optimization: Load elements AND do first add of reduction
 	int i = blockIdx.x * (blockDim.x * 2) + threadIdx.x;
-	partial_sum[threadIdx.x] = v[i] + v[i + blockDim.x];
+	partial_sum[threadIdx.x] = v.d_ptr[i] + v.d_ptr[i + blockDim.x];
 	__syncthreads();
 
 	// Optimization: Stop early (finish off with warpReduce)
@@ -85,118 +225,74 @@ __global__ void sum_reduction(int *v, int *v_r, int N) {
   // if 1st pass <num_blocks, num_threads>: store partial sum for each block
 	// if 2nd pass <1, num_threads>: store final sum
 	if (threadIdx.x == 0) {
-		v_r[blockIdx.x] = partial_sum[0];
+		v_r.d_ptr[blockIdx.x] = partial_sum[0];
 	}
 }
 // END SUM REDUCTION
-
 
 #define NO_SIGNAL 0
 #define HAS_SIGNAL 1
 #define OUT_OF_POI 2
 
-__global__ void calculateCoverage(const int *d_radii, int num_antennae,
-                                  const int *d_originX, const int *d_originY,
-                                  const int *d_PoIVertX, const int *d_PoIVertY, int num_PoIVert,
-                                  const int maxX, const int maxY, int *d_Grid2D)
+__global__ void calculateCoverage(
+  const CUDAArray<int> radii, const CUDAArray<int> originX, const CUDAArray<int> originY,
+  const CUDAArray<int> PoIVertX, const CUDAArray<int> PoIVertY,
+  const int maxX, const int maxY, CUDAArray<int> Grid2D
+  )
  {
     int tid = (blockIdx.x * blockDim.x) + threadIdx.x;
     if (tid >= maxX * maxY) return;
     int X = tid % maxX;
     int Y = tid / maxX;
-    d_Grid2D[tid] = NO_SIGNAL; 
-    for (size_t i = 0; i < num_antennae; ++i) {
-        int dx = X - d_originX[i];
-        int dy = Y - d_originY[i];
+    Grid2D.d_ptr[tid] = NO_SIGNAL; 
+    for (size_t i = 0; i < radii.size(); ++i) {
+        printf("X: %d, Y: %d, originX: %d, originY: %d, radii: %d\n", X, Y, originX.d_ptr[i], originY.d_ptr[i], radii.d_ptr[i]);
+        int dx = X - originX.d_ptr[i];
+        int dy = Y - originY.d_ptr[i];
         int d2 = dx * dx + dy * dy; 
-        int r2 = d_radii[i] * d_radii[i];
+        int r2 = radii.d_ptr[i] * radii.d_ptr[i];
         if (d2 <= r2) {
-            d_Grid2D[tid] = HAS_SIGNAL;
+            printf("INTERSECT: X: %d, Y: %d, originX: %d, originY: %d, radii: %d\n", X, Y, originX.d_ptr[i], originY.d_ptr[i], radii.d_ptr[i]);
+            Grid2D.d_ptr[tid] = HAS_SIGNAL;
             break; 
         }
     }
 }
 
-void display_2d(std::vector<int> Grid2D, size_t maxX, std::string label) {
-  std::cout<<label<<std::endl;
-  for (int i = 0; i < Grid2D.size() / maxX; ++i) {
-    for( int j = 0; j < maxX; ++j){
-        std::cout<<Grid2D[i*maxX + j]<<" ";
-    }
-    std::cout<<std::endl;
-  }
-}
-
-/* Dynamically calculate max X and Y grid span
-*/
-void getBoundingSq(
-    const std::vector<int>& PoIVertX,
-    const std::vector<int>& PoIVertY,
-    uint32_t& maxX, uint32_t& maxY){
-        maxX=maxY=0;
-        for(size_t i = 0; i < PoIVertX.size(); ++i){
-            if(PoIVertX[i] > maxX) maxX = PoIVertX[i];
-            if(PoIVertY[i] > maxY) maxY = PoIVertY[i];
-        }
-}
-
 int main() {
-  // struct of arrays data layout
-  std::vector<int> radii = {10, 10};
-  std::vector<int> originX = {0, 10};
-  std::vector<int> originY = {0, 10};
-  std::vector<int> PoIVertX = {0, 10, 0, 10};
-  std::vector<int> PoIVertY = {0, 10, 0, 10};
-  uint32_t maxX = 0, maxY = 0;
-  getBoundingSq(PoIVertX, PoIVertY, maxX, maxY);
-  int numThreads = SIZE;
-  int numBlocks = (maxX * maxY + numThreads - 1) / numThreads;
-  std::vector<int> Grid2D;
-  Grid2D.resize(maxX * maxY);
-  std::vector<int> h_sum_r;
-  h_sum_r.resize(numThreads);
-
-  int *d_radii, *d_originX, *d_originY, *d_PoIVertX, *d_PoIVertY, *d_Grid2D, *d_sum_r;
-  size_t size_radii = sizeof(decltype(radii)::value_type) * radii.size();
-  size_t size_originX = sizeof(decltype(originX)::value_type) * originX.size();
-  size_t size_originY = sizeof(decltype(originY)::value_type) * originY.size();
-  size_t size_PoIVertX = sizeof(decltype(PoIVertX)::value_type) * PoIVertX.size();
-  size_t size_PoIVertY = sizeof(decltype(PoIVertY)::value_type) * PoIVertY.size();
-  size_t size_Grid2D = sizeof(decltype(Grid2D)::value_type) * Grid2D.size();
-  size_t size_sum_r = sizeof(decltype(Grid2D)::value_type) * Grid2D.size();
-
-  cudaMalloc(&d_radii, size_radii);
-  cudaMalloc(&d_originX, size_originX);
-  cudaMalloc(&d_originY, size_originY);
-  cudaMalloc(&d_PoIVertX, size_PoIVertX);
-  cudaMalloc(&d_PoIVertY, size_PoIVertY);
-  cudaMalloc(&d_Grid2D, size_Grid2D);
-  cudaMalloc(&d_sum_r, size_sum_r);
-
-  cudaMemcpy(d_radii, radii.data(), size_radii, cudaMemcpyHostToDevice);
-  cudaMemcpy(d_originX, originX.data(), size_originX, cudaMemcpyHostToDevice);
-  cudaMemcpy(d_originY, originY.data(), size_originY, cudaMemcpyHostToDevice);
-  cudaMemcpy(d_PoIVertX, PoIVertX.data(), size_PoIVertX, cudaMemcpyHostToDevice);
-  cudaMemcpy(d_PoIVertY, PoIVertY.data(), size_PoIVertY, cudaMemcpyHostToDevice);
+      std::cout<< "BEGINNING EXECUTION\n";
+      // struct of arrays data layout
+      { // Device memory scope
+      auto radii = CUDAArray<int>::make_ptr({1, 2});
+      auto originX = CUDAArray<int>::make_ptr({0, 4});
+      auto originY = CUDAArray<int>::make_ptr({0, 4});
+      auto PoIVertX = CUDAArray<int>::make_ptr({0, 5, 0, 5});
+      auto PoIVertY = CUDAArray<int>::make_ptr({0, 5, 5, 0});
+      uint32_t maxX = *std::max_element(PoIVertX->begin(), PoIVertX->end());
+      uint32_t maxY = *std::max_element(PoIVertY->begin(), PoIVertY->end());
+      int numThreads = SIZE;
+      int numBlocks = (maxX * maxY + numThreads - 1) / numThreads;
+      auto Grid2D = CUDAArray<int>::make_ptr(maxX * maxY, 0); // fill with 0
+      auto sum = CUDAArray<int>::make_ptr(numThreads, 0);
   
-  std::cout<< "calculateCoverage<<<" << numBlocks << ", " << numThreads << ">>> to process " << maxX*maxY << " elements\n";
-  calculateCoverage<<<numBlocks, numThreads>>>(d_radii, radii.size(), d_originX, d_originY, d_PoIVertX, d_PoIVertY, PoIVertX.size(), maxX, maxY, d_Grid2D);
-	// Optimization: sum_reduction requires 2 times less blocks
-    std::cout<< "sum_reduction<<<" << std::max(1, numBlocks / 2) << ", " << numThreads << ">>> to process " << maxX*maxY << " elements\n";
-  sum_reduction << <std::max(1, numBlocks / 2), numThreads >> > (d_Grid2D, d_sum_r, maxX * maxY);
-	sum_reduction << <1, numThreads >> > (d_sum_r, d_sum_r, maxX * maxY);
+      std::cout<< "calculateCoverage<<<" << numBlocks << ", " << numThreads << ">>> to process " << maxX*maxY << " elements\n";
+      calculateCoverage<<<numBlocks, numThreads>>>(*radii, *originX, *originY, *PoIVertX, *PoIVertY, maxX, maxY, *Grid2D);
+      chck();
+      // Optimization: sum_reduction requires 2 times less blocks
+      std::cout<< "sum_reduction<<<" << std::max(1, numBlocks / 2) << ", " << numThreads << ">>> to process " << maxX*maxY << " elements\n";
+      sum_reduction << <std::max(1, numBlocks / 2), numThreads >> > (*Grid2D, *sum, maxX * maxY); // TODO remove maxX*maxY param
+      sum_reduction << <1, numThreads >> > (*sum, *sum, maxX * maxY); // TODO remove maxX*maxY param
 
-  cudaMemcpy(Grid2D.data(), d_Grid2D, size_Grid2D, cudaMemcpyDeviceToHost);
-	cudaMemcpy(h_sum_r.data(), d_sum_r, size_sum_r, cudaMemcpyDeviceToHost);
+      Grid2D->cudaMemcpyDeviceToHost();
+      sum->cudaMemcpyDeviceToHost();
   
-	cudaDeviceSynchronize(); // todo do we need?
-  display_2d(Grid2D, maxX, "Grid2D");
-	printf("GPU sum: %d \n", h_sum_r[0]);
-	printf("CPU sum: %d \n", std::reduce(Grid2D.begin(), Grid2D.end()));
+      print2d(*Grid2D, maxX, "Grid2D");
+      printf("GPU sum: %d \n", sum->h_ptr[0]);
+      printf("CPU sum: %d \n", std::reduce(Grid2D->begin(), Grid2D->end()));
 
-  cudaFree(d_radii); cudaFree(d_originX); cudaFree(d_originY);
-  cudaFree(d_PoIVertX); cudaFree(d_PoIVertY); cudaFree(d_Grid2D);
-  return 0;
+      } // Device memory scope
+      cudaDeviceReset();
+      return 0;
 }
 
 // void getBoundingSq(
@@ -213,6 +309,19 @@ int main() {
 //             if(PoIVertY[i] > maxY) maxY = PoIVertY[i];
 //         }
 // }
+
+///* Dynamically calculate max X and Y grid span
+//*/
+//void getBoundingSq(
+//    const std::vector<int>& PoIVertX,
+//    const std::vector<int>& PoIVertY,
+//    uint32_t& maxX, uint32_t& maxY){
+//        maxX=maxY=0;
+//        for(size_t i = 0; i < PoIVertX.size(); ++i){
+//            if(PoIVertX.at(i) > maxX) maxX = PoIVertX.at(i);
+//            if(PoIVertY.at(i) > maxY) maxY = PoIVertY.at(i);
+//        }
+//}
 
 
 
