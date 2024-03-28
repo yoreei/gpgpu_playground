@@ -24,7 +24,7 @@
     <ClInclude Include="Resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="Dx11View.h">
+    <ClInclude Include="directx-11-view.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

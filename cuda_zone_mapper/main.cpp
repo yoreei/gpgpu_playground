@@ -2,6 +2,7 @@
 #include "cuda_array.cuh"
 #include "cuda_map.cuh"
 #include "cuda_reduce.cuh"
+#include "directx-11-view/directx-11-view.h"
 
 map_data read_data(){
         // TODO read JSON
@@ -27,6 +28,7 @@ int main() {
                 vd.buffer = cuda_map(md);
                 vd.sum = cuda_reduce(vd.buffer);
                 view_render(vd);
+                show_window();
 
         } // device scope
 

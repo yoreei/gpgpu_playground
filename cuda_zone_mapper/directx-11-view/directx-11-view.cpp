@@ -2,7 +2,9 @@
 //
 
 #include "framework.h"
-#include "Dx11View.h"
+#include "directx-11-view.h"
+#include <stdio.h>
+#include <stdexcept>
 
 #define MAX_LOADSTRING 100
 
@@ -17,23 +19,59 @@ BOOL                InitInstance(HINSTANCE, int);
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 INT_PTR CALLBACK    About(HWND, UINT, WPARAM, LPARAM);
 
-int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
-                     _In_opt_ HINSTANCE hPrevInstance,
-                     _In_ LPWSTR    lpCmdLine,
-                     _In_ int       nCmdShow)
+void print_last_error(DWORD err)
 {
-    UNREFERENCED_PARAMETER(hPrevInstance);
-    UNREFERENCED_PARAMETER(lpCmdLine);
+    // Allocate a buffer for the error message
+    LPSTR messageBuffer = nullptr;
+    
+    // Format the error message string
+    size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                 NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+
+    // Print the error message
+    if (size) {
+        printf("%s\n", messageBuffer);
+    } else {
+        printf("Failed to retrieve error message.\n");
+    }
+
+    // Free the buffer allocated by FormatMessage
+    LocalFree(messageBuffer);
+}
+
+void win_chck()
+{
+    DWORD err = GetLastError();
+    if (err) {
+        print_last_error(err);
+        throw std::runtime_error("Error in Windows API call");
+    }
+}
+
+//int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
+//                     _In_opt_ HINSTANCE hPrevInstance,
+//                     _In_ LPWSTR    lpCmdLine,
+//                     _In_ int       nCmdShow)
+int show_window()
+{
+
+    // UNREFERENCED_PARAMETER(hPrevInstance);
+    // UNREFERENCED_PARAMETER(lpCmdLine);
+
+    HINSTANCE hInstance = hInst;
+    win_chck();
 
     // TODO: Place code here.
 
     // Initialize global strings
     LoadStringW(hInstance, IDS_APP_TITLE, szTitle, MAX_LOADSTRING);
     LoadStringW(hInstance, IDC_DX11VIEW, szWindowClass, MAX_LOADSTRING);
+    win_chck();
     MyRegisterClass(hInstance);
+    win_chck();
 
     // Perform application initialization:
-    if (!InitInstance (hInstance, nCmdShow))
+    if (!InitInstance (hInstance, SW_SHOW))
     {
         return FALSE;
     }
@@ -55,6 +93,32 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     return (int) msg.wParam;
 }
 
+/*
+*  A trick to get the HINSTANCE of the DLL
+*/
+BOOL APIENTRY DllMain( HMODULE hModule,
+           DWORD  ul_reason_for_call,
+           LPVOID lpReserved
+                     )
+{
+    #if _DEBUG
+        printf("GameInterface.dll::DllMain()\n");
+    #endif
+
+    switch (ul_reason_for_call)
+    {
+        case DLL_PROCESS_ATTACH:
+        case DLL_THREAD_ATTACH:
+            hInst = hModule;
+            break;
+        case DLL_THREAD_DETACH:
+        case DLL_PROCESS_DETACH:
+            // Shutdown();
+            break;
+    }
+    return TRUE;
+}
+
 
 
 //
@@ -64,7 +128,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 //
 ATOM MyRegisterClass(HINSTANCE hInstance)
 {
-    WNDCLASSEXW wcex;
+    WNDCLASSEXW wcex = { };
 
     wcex.cbSize = sizeof(WNDCLASSEX);
 
@@ -102,6 +166,8 @@ BOOL InitInstance(HINSTANCE hInstance, int nCmdShow)
 
    if (!hWnd)
    {
+      DWORD err = GetLastError();
+      print_last_error(err);
       return FALSE;
    }
 
